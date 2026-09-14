@@ -92,14 +92,12 @@ async function handleGetFreeSignal(ctx) {
     isInChannel,
     text: checkText,
   } = await isUserInChannel(ctx.telegram, ctx.from.id);
-  const channel = `@${config.channelUsername}`;
-
   if (!isInChannel) {
     await replyBold(
       ctx,
-      `${checkText}\n\n<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> <b>Join ${channel} first to unlock free signal!</b>`,
+      `${checkText}\n\n<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> <b>Join the channel first to unlock free signal!</b>`,
       Markup.inlineKeyboard([
-        Markup.button.url('Join Channel', `https://t.me/${config.channelUsername}`),
+        Markup.button.url('Join Channel', config.channelInvite),
         Markup.button.callback('Try Again 🔄', 'gfs:check'),
       ]),
     ).catch(() => {});

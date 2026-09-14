@@ -18,6 +18,7 @@ const config = {
   webhookSecret: process.env.WEBHOOK_SECRET || '',
   port: Number(process.env.PORT) || 3000,
   channelUsername: process.env.CHANNEL_USERNAME || 'bfsstamil',
+  channelInvite: process.env.CHANNEL_INVITE || 'https://t.me/+7RP9Zro49OA4M2Rl',
 };
 
 module.exports = config;

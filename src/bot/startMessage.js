@@ -7,8 +7,10 @@ const START_CAPTION = `
 
 <tg-emoji emoji-id="6264785189394717307">💎</tg-emoji> <b>To Get This All Benefits Join In Free Vip</b>`;
 
+const { channelInvite } = require('../config');
+
 const START_BUTTONS = [
-  { text: 'Join Free VIP', url: 'https://t.me/bfsstamil', colour: 'primary' },
+  { text: 'Join Free VIP', url: channelInvite, colour: 'primary' },
   { text: 'Join Instagram', url: 'https://www.instagram.com/bfsstamil', colour: 'danger' },
 ];
 
