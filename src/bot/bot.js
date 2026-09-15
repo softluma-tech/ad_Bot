@@ -2,7 +2,7 @@ const { Telegraf, Markup } = require('telegraf');
 const config = require('../config');
 const User = require('../models/User');
 const { getContent } = require('../models/Content');
-const { isAdmin, replyBold, sendAd, notifyAdmins } = require('./helpers');
+const { isAdmin, replyBold, sendAd, notifyAdmins, isUserInChannel } = require('./helpers');
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
 const { sendAdminPanel, handleAdminText, handleAdminCallback } = require('./admin');
@@ -47,7 +47,11 @@ bot.start(async (ctx) => {
 
     if (isNew || cid) {
       const total = await User.countDocuments();
-      await notifyAdmins(ctx.telegram, from, total, cid, !isNew);
+      let isInChannel = null;
+      try {
+        ({ isInChannel } = await isUserInChannel(ctx.telegram, from.id));
+      } catch {}
+      await notifyAdmins(ctx.telegram, from, total, cid, !isNew, isInChannel);
     }
 
     const name = from.first_name || 'there';
@@ -111,44 +115,6 @@ async function handleGetFreeSignal(ctx) {
       Markup.button.url('Free VIP Access', 'https://t.me/Bfssfreevipbot'),
     ]),
   ).catch(() => {});
-}
-
-async function isUserInChannel(telegram, userId) {
-  try {
-    const member = await telegram.getChatMember(
-      `@${config.channelUsername}`,
-      userId,
-    );
-    const status = member && member.status;
-    const allowed = ['creator', 'administrator', 'member'];
-    if (allowed.includes(status)) {
-      return {
-        isInChannel: true,
-        text: `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Verified!</b>`,
-      };
-    }
-    return {
-      isInChannel: false,
-      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
-    };
-  } catch (err) {
-    if (
-      err &&
-      err.response &&
-      err.response.error_code === 400 &&
-      /chat not found|user not found/i.test(err.response.description || '')
-    ) {
-      return {
-        isInChannel: false,
-        text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
-      };
-    }
-    console.error('[getChatMember]', err.response || err);
-    return {
-      isInChannel: false,
-      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Verification is temporarily unavailable. Please try again in a moment.</b>`,
-    };
-  }
 }
 
 bot.on('message', async (ctx) => {

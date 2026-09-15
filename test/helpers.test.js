@@ -30,7 +30,7 @@ test('isAdmin matches numeric string ids', () => {
   assert.equal(isAdminFor('42', '42'), true);
 });
 
-async function notifyFor({ adminIds, from, total, cid, isReturning = false }) {
+async function notifyFor({ adminIds, from, total, cid, isReturning = false, isInChannel = null }) {
   const env = {
     PATH: process.env.PATH,
     BOT_TOKEN: '123:abc',
@@ -45,7 +45,7 @@ async function notifyFor({ adminIds, from, total, cid, isReturning = false }) {
         return {};
       },
     };
-    notifyAdmins(tg, ${JSON.stringify(from)}, ${total}, ${JSON.stringify(cid)}, ${isReturning})
+    notifyAdmins(tg, ${JSON.stringify(from)}, ${total}, ${JSON.stringify(cid)}, ${isReturning}, ${isInChannel})
       .then(() => process.exit(0))
       .catch((e) => { console.error(e); process.exit(1); });
   `;
@@ -60,7 +60,7 @@ async function notifyFor({ adminIds, from, total, cid, isReturning = false }) {
 
 test('notifyAdmins sends to every admin and includes the cid', async () => {
   const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
-  const msgs = await notifyFor({ adminIds: '1,2', from, total: 10, cid: 'cid_123' });
+  const msgs = await notifyFor({ adminIds: '1,2', from, total: 10, cid: 'cid_123', isInChannel: null });
   assert.equal(msgs.length, 2);
   assert.deepEqual(msgs.map((m) => m.chatId), [1, 2]);
   assert.ok(msgs.every((m) => m.text.includes('New user joined!')));
@@ -69,27 +69,45 @@ test('notifyAdmins sends to every admin and includes the cid', async () => {
   assert.equal(msgs[0].parseMode, 'HTML');
 });
 
+test('notifyAdmins links the name to the user chat', async () => {
+  const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
+  const msgs = await notifyFor({ adminIds: '1', from, total: 10, cid: null, isInChannel: null });
+  assert.ok(msgs[0].text.includes('<a href="tg://user?id=5">'));
+});
+
+test('notifyAdmins includes In Channel yes', async () => {
+  const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
+  const msgs = await notifyFor({ adminIds: '1', from, total: 10, cid: null, isInChannel: true });
+  assert.ok(msgs[0].text.includes('In Channel: <b>Yes</b>'));
+});
+
+test('notifyAdmins includes In Channel no', async () => {
+  const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
+  const msgs = await notifyFor({ adminIds: '1', from, total: 10, cid: null, isInChannel: false });
+  assert.ok(msgs[0].text.includes('In Channel: <b>No</b>'));
+});
+
+test('notifyAdmins omits In Channel row when status is unknown', async () => {
+  const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
+  const msgs = await notifyFor({ adminIds: '1', from, total: 10, cid: null, isInChannel: null });
+  assert.ok(!msgs[0].text.includes('In Channel:'));
+});
+
 test('notifyAdmins tags returning users as old user', async () => {
   const from = { id: 5, first_name: 'Ada', last_name: 'L', username: 'ada' };
-  const msgs = await notifyFor({ adminIds: '1', from, total: 15, cid: 'cid_999', isReturning: true });
+  const msgs = await notifyFor({ adminIds: '1', from, total: 15, cid: 'cid_999', isReturning: true, isInChannel: false });
   assert.equal(msgs.length, 1);
   assert.ok(msgs[0].text.includes('Old user returned!'));
   assert.ok(!msgs[0].text.includes('New user joined!'));
   assert.ok(msgs[0].text.includes('Cid: <b>cid_999</b>'));
   assert.ok(msgs[0].text.includes('<b>Total users: 15</b>'));
+  assert.ok(msgs[0].text.includes('In Channel: <b>No</b>'));
 });
 
 test('notifyAdmins omits cid row when no cid provided', async () => {
   const from = { id: 5, first_name: 'Ada', last_name: '', username: null };
-  const msgs = await notifyFor({ adminIds: '1', from, total: 3, cid: null });
+  const msgs = await notifyFor({ adminIds: '1', from, total: 3, cid: null, isInChannel: null });
   assert.equal(msgs.length, 1);
   assert.ok(msgs[0].text.includes('New user joined!'));
-  assert.ok(!msgs[0].text.includes('Cid:'));
-});
-
-test('notifyAdmins omits cid row when no cid provided', async () => {
-  const from = { id: 5, first_name: 'Ada', last_name: '', username: null };
-  const msgs = await notifyFor({ adminIds: '1', from, total: 3, cid: null });
-  assert.equal(msgs.length, 1);
   assert.ok(!msgs[0].text.includes('Cid:'));
 });

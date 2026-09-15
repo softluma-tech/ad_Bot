@@ -62,17 +62,59 @@ async function sendAd(telegram, chatId) {
   }
 }
 
-async function notifyAdmins(telegram, from, total, cid, isReturning = false) {
+async function isUserInChannel(telegram, userId) {
+  try {
+    const member = await telegram.getChatMember(
+      `@${config.channelUsername}`,
+      userId,
+    );
+    const status = member && member.status;
+    const allowed = ['creator', 'administrator', 'member'];
+    if (allowed.includes(status)) {
+      return {
+        isInChannel: true,
+        text: `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Verified!</b>`,
+      };
+    }
+    return {
+      isInChannel: false,
+      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
+    };
+  } catch (err) {
+    if (
+      err &&
+      err.response &&
+      err.response.error_code === 400 &&
+      /chat not found|user not found/i.test(err.response.description || '')
+    ) {
+      return {
+        isInChannel: false,
+        text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
+      };
+    }
+    console.error('[getChatMember]', err.response || err);
+    return {
+      isInChannel: false,
+      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Verification is temporarily unavailable. Please try again in a moment.</b>`,
+    };
+  }
+}
+
+async function notifyAdmins(telegram, from, total, cid, isReturning = false, isInChannel = null) {
   const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Unknown';
   let text =
     (isReturning
       ? `<tg-emoji emoji-id="${EMOJIS.smile}">🙂</tg-emoji> <b>Old user returned!</b>`
       : `<tg-emoji emoji-id="${EMOJIS.smile}">🙂</tg-emoji> <b>New user joined!</b>`) +
     `\n\n` +
-    `<tg-emoji emoji-id="${EMOJIS.smile}">🙂</tg-emoji> Name: <b>${escapeHtml(name)}</b>\n` +
+    `<tg-emoji emoji-id="${EMOJIS.smile}">🙂</tg-emoji> Name: <a href="tg://user?id=${from.id}"><b>${escapeHtml(name)}</b></a>\n` +
     `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Username: ${from.username ? '<b>@' + escapeHtml(from.username) + '</b>' : '—'}\n` +
     `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> ID: <b>${from.id}</b>\n`;
   if (cid) text += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Cid: <b>${escapeHtml(cid)}</b>\n`;
+  if (isInChannel === true)
+    text += `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> In Channel: <b>Yes</b>\n`;
+  else if (isInChannel === false)
+    text += `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> In Channel: <b>No</b>\n`;
   text += `<tg-emoji emoji-id="${EMOJIS.calendar}">🗓</tg-emoji> Date: <b>${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })}</b>\n\n` +
     `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Total users: ${total}</b>`;
   for (const adminId of config.adminIds) {
@@ -84,4 +126,4 @@ async function notifyAdmins(telegram, from, total, cid, isReturning = false) {
   }
 }
 
-module.exports = { isAdmin, delay, sendBold, replyBold, editBold, editBoldCtx, sendAd, notifyAdmins };
+module.exports = { isAdmin, delay, sendBold, replyBold, editBold, editBoldCtx, sendAd, notifyAdmins, isUserInChannel };
