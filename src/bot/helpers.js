@@ -73,7 +73,7 @@ async function notifyAdmins(telegram, from, total, cid, isReturning = false) {
     `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Username: ${from.username ? '<b>@' + escapeHtml(from.username) + '</b>' : '—'}\n` +
     `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> ID: <b>${from.id}</b>\n`;
   if (cid) text += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Cid: <b>${escapeHtml(cid)}</b>\n`;
-  text += `<tg-emoji emoji-id="${EMOJIS.calendar}">🗓</tg-emoji> Date: <b>${new Date().toLocaleString('en-GB')}</b>\n\n` +
+  text += `<tg-emoji emoji-id="${EMOJIS.calendar}">🗓</tg-emoji> Date: <b>${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })}</b>\n\n` +
     `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Total users: ${total}</b>`;
   for (const adminId of config.adminIds) {
     try {
