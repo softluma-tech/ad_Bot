@@ -5,7 +5,7 @@ const { getContent } = require('../models/Content');
 const { isAdmin, replyBold, sendAd, notifyAdmins, isUserInChannel } = require('./helpers');
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
-const { sendAdminPanel, handleAdminText, handleAdminCallback } = require('./admin');
+const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport } = require('./admin');
 const { handleBroadcastCallback, handleBroadcastMessage } = require('./broadcast');
 
 const bot = new Telegraf(config.botToken);
@@ -147,6 +147,17 @@ bot.on('message', async (ctx) => {
       }
       case 'broadcast':
         return handleBroadcastMessage(ctx, m);
+      case 'dayreport': {
+        const days = Number(m.text.trim());
+        if (!Number.isInteger(days) || days < 1) {
+          return replyBold(
+            ctx,
+            `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Please send a valid number of days.</b>\n\nUse /cancel to abort.`,
+          );
+        }
+        clearState(ctx.chat.id);
+        return handleDayReport(ctx, days);
+      }
       default:
         return;
     }

@@ -10,6 +10,7 @@ const { createThrottle } = require("./throttle");
 const PANEL_ACTIONS = {
   "📊 Stats": "stats",
   "📊 Report": "report",
+  "📅 Day Report": "dayreport",
   "🖇 Change Image": "image",
   "👥 Channel Members": "channel",
   "🗣 Broadcast": "broadcast",
@@ -20,6 +21,7 @@ const PANEL_ACTIONS = {
 const panelKeyboard = () =>
   Markup.keyboard([
     ["📊 Stats", "📊 Report"],
+    ["📅 Day Report"],
     ["🖇 Change Image", "👥 Channel Members"],
     ["🗣 Broadcast"],
     ["👁 Preview Ad", "❌ Close"],
@@ -171,6 +173,14 @@ async function handleAdminText(ctx, text) {
         panelKeyboard(),
       );
     }
+    case "dayreport": {
+      setState(ctx.chat.id, { action: "dayreport" });
+      return replyBold(
+        ctx,
+        `<tg-emoji emoji-id="${EMOJIS.calendar}">🗓</tg-emoji> <b>Day-wise report</b>\n\nSend the number of days (up to 90). Example: <b>5</b> → last 5 days including today.\n\nUse /cancel to abort.`,
+        panelKeyboard(),
+      );
+    }
     case "preview":
       return sendAd(ctx.telegram, ctx.from.id);
     case "close":
@@ -195,6 +205,55 @@ function formatReport(rows, total) {
   return txt;
 }
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const MAX_DAYS = 90;
+
+function istDayStart(daysAgo) {
+  const istNow = new Date(Date.now() + IST_OFFSET_MS);
+  istNow.setUTCHours(0, 0, 0, 0);
+  istNow.setUTCDate(istNow.getUTCDate() - daysAgo);
+  return new Date(istNow.getTime() - IST_OFFSET_MS);
+}
+
+function buildDayReport(days, rows) {
+  let txt =
+    `<tg-emoji emoji-id="${EMOJIS.stats}">📊</tg-emoji> <b>Day-wise Report (last ${days} days)</b>`;
+  for (const r of rows) {
+    txt +=
+      `\n\n<tg-emoji emoji-id="${EMOJIS.calendar}">🗓</tg-emoji> ` +
+      (r.isToday ? `<b>${r.label} (Today)</b>` : r.label) +
+      `\n<tg-emoji emoji-id="${EMOJIS.star}">🌟</tg-emoji> New users: <b>${r.newCount}</b>\n` +
+      `<tg-emoji emoji-id="${EMOJIS.green}">🟢</tg-emoji> Active users: <b>${r.activeCount}</b>`;
+  }
+  return txt;
+}
+
+async function handleDayReport(ctx, days) {
+  const n = Math.min(MAX_DAYS, Math.max(1, Math.floor(days)));
+  const rows = [];
+  for (let d = n - 1; d >= 0; d--) {
+    const start = istDayStart(d);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const [newCount, activeCount] = await Promise.all([
+      User.countDocuments({ firstSeen: { $gte: start, $lt: end } }),
+      User.countDocuments({ lastSeen: { $gte: start, $lt: end } }),
+    ]);
+    rows.push({
+      label: start.toLocaleDateString("en-GB", {
+        timeZone: "Asia/Kolkata",
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }),
+      newCount,
+      activeCount,
+      isToday: d === 0,
+    });
+  }
+  return replyBold(ctx, buildDayReport(n, rows), panelKeyboard());
+}
+
 async function handleAdminCallback(ctx, data) {
   if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("⛔ Not allowed");
   await ctx.answerCbQuery().catch(() => {});
@@ -204,4 +263,4 @@ async function handleAdminCallback(ctx, data) {
   }
 }
 
-module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, formatReport };
+module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, formatReport, buildDayReport, handleDayReport };
