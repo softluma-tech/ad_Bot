@@ -73,11 +73,13 @@ async function isUserInChannel(telegram, userId) {
     if (allowed.includes(status)) {
       return {
         isInChannel: true,
+        ok: true,
         text: `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Verified!</b>`,
       };
     }
     return {
       isInChannel: false,
+      ok: true,
       text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
     };
   } catch (err) {
@@ -85,16 +87,18 @@ async function isUserInChannel(telegram, userId) {
       err &&
       err.response &&
       err.response.error_code === 400 &&
-      /chat not found|user not found/i.test(err.response.description || '')
+      /chat not found|user not found|not a participant/i.test(err.response.description || '')
     ) {
       return {
         isInChannel: false,
+        ok: true,
         text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
       };
     }
     console.error('[getChatMember]', err.response || err);
     return {
       isInChannel: false,
+      ok: false,
       text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Verification is temporarily unavailable. Please try again in a moment.</b>`,
     };
   }
