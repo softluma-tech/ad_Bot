@@ -7,4 +7,5 @@ async function connectDB() {
   console.log(`[db] connected (${config.env} mode)`);
 }
 
+
 module.exports = { connectDB };
