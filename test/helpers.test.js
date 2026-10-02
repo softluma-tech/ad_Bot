@@ -106,8 +106,80 @@ test('notifyAdmins tags returning users as old user', async () => {
 
 test('notifyAdmins omits cid row when no cid provided', async () => {
   const from = { id: 5, first_name: 'Ada', last_name: '', username: null };
-  const msgs = await notifyFor({ adminIds: '1', from, total: 3, cid: null, isInChannel: null });
+  const msgs = await notifyFor({ adminIds: '1', from, total: 3, cid: null, isReturning: false, isInChannel: null });
   assert.equal(msgs.length, 1);
   assert.ok(msgs[0].text.includes('New user joined!'));
   assert.ok(!msgs[0].text.includes('Cid:'));
+});
+
+function checkFor(handler) {
+  const env = {
+    PATH: process.env.PATH,
+    BOT_TOKEN: '123:abc',
+    MONGO_URI: 'mongodb://127.0.0.1:27017/test',
+    ADMIN_IDS: '1',
+  };
+  const script = `
+    const { isUserInChannel } = require(${JSON.stringify(HELPERS)});
+    isUserInChannel({ getChatMember: async () => { ${handler} } }, 42, { quiet: true })
+      .then((r) => process.stdout.write(JSON.stringify({
+        isInChannel: r.isInChannel,
+        ok: r.ok,
+        rateLimited: r.rateLimited,
+        fatal: r.fatal,
+        retryAfter: r.retryAfter,
+      })))
+      .catch((e) => { console.error(e); process.exit(1); });
+  `;
+  const res = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8' });
+  if (res.status !== 0) throw new Error(res.stderr);
+  return JSON.parse(res.stdout);
+}
+
+test('isUserInChannel treats member statuses as joined', () => {
+  const r = checkFor("return { status: 'member' };");
+  assert.deepEqual(r, { isInChannel: true, ok: true, rateLimited: false, fatal: false, retryAfter: 0 });
+});
+
+test('isUserInChannel treats left status as a definitive non-member', () => {
+  const r = checkFor("return { status: 'left' };");
+  assert.equal(r.ok, true);
+  assert.equal(r.isInChannel, false);
+  assert.equal(r.fatal, false);
+});
+
+test('isUserInChannel surfaces retry_after on 429 instead of hiding it', () => {
+  const r = checkFor(
+    "const e = new Error('429'); e.response = { error_code: 429, description: 'Too Many Requests', parameters: { retry_after: 7 } }; throw e;",
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.rateLimited, true);
+  assert.equal(r.retryAfter, 7);
+});
+
+test('isUserInChannel flags 403 as fatal (bot cannot read the channel)', () => {
+  const r = checkFor(
+    "const e = new Error('403'); e.response = { error_code: 403, description: 'Forbidden: bot is not a participant' }; throw e;",
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.fatal, true);
+  assert.equal(r.rateLimited, false);
+});
+
+test('isUserInChannel treats user-not-found as a definitive non-member', () => {
+  const r = checkFor(
+    "const e = new Error('400'); e.response = { error_code: 400, description: 'Bad Request: user not found' }; throw e;",
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.isInChannel, false);
+  assert.equal(r.fatal, false);
+});
+
+test('isUserInChannel reports unknown errors as unverifiable but not fatal', () => {
+  const r = checkFor(
+    "const e = new Error('500'); e.response = { error_code: 500, description: 'Internal Server Error' }; throw e;",
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.fatal, false);
+  assert.equal(r.rateLimited, false);
 });

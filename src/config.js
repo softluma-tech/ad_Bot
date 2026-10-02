@@ -19,6 +19,8 @@ const config = {
   port: Number(process.env.PORT) || 3000,
   channelUsername: process.env.CHANNEL_USERNAME || 'bfsstamil',
   channelInvite: process.env.CHANNEL_INVITE || 'https://t.me/+7RP9Zro49OA4M2Rl',
+  channelCheckIntervalMs: Number(process.env.CHANNEL_CHECK_INTERVAL_MS) || 400,
+  channelScanMaxMs: Number(process.env.CHANNEL_SCAN_MAX_MS) || 0,
 };
 
 module.exports = config;

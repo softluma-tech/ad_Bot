@@ -62,44 +62,85 @@ async function sendAd(telegram, chatId) {
   }
 }
 
-async function isUserInChannel(telegram, userId) {
+const MEMBER_STATUSES = ['creator', 'administrator', 'member'];
+
+const channelNotJoinedText = () =>
+  `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`;
+
+const channelVerifiedText = () =>
+  `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Verified!</b>`;
+
+const channelUnavailableText = () =>
+  `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Verification is temporarily unavailable. Please try again in a moment.</b>`;
+
+async function isUserInChannel(telegram, userId, options = {}) {
+  const quiet = options.quiet === true;
   try {
-    const member = await telegram.getChatMember(
-      `@${config.channelUsername}`,
-      userId,
-    );
+    const member = await telegram.getChatMember(`@${config.channelUsername}`, userId);
     const status = member && member.status;
-    const allowed = ['creator', 'administrator', 'member'];
-    if (allowed.includes(status)) {
-      return {
-        isInChannel: true,
-        ok: true,
-        text: `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Verified!</b>`,
-      };
-    }
+    const isInChannel = MEMBER_STATUSES.includes(status);
     return {
-      isInChannel: false,
+      isInChannel,
       ok: true,
-      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
+      status: status || null,
+      retryAfter: 0,
+      rateLimited: false,
+      fatal: false,
+      text: isInChannel ? channelVerifiedText() : channelNotJoinedText(),
     };
   } catch (err) {
-    if (
-      err &&
-      err.response &&
-      err.response.error_code === 400 &&
-      /chat not found|user not found|not a participant/i.test(err.response.description || '')
-    ) {
+    const resp = (err && err.response) || {};
+    const code = resp.error_code;
+    const description = resp.description || '';
+
+    if (code === 429) {
+      const retryAfter = Number((resp.parameters && resp.parameters.retry_after) || 1);
+      if (!quiet) console.warn(`[getChatMember] rate limited — retry after ${retryAfter}s`);
+      return {
+        isInChannel: false,
+        ok: false,
+        status: null,
+        retryAfter,
+        rateLimited: true,
+        fatal: false,
+        text: channelUnavailableText(),
+      };
+    }
+
+    if (code === 403) {
+      if (!quiet) console.error(`[getChatMember] 403 — bot cannot read @${config.channelUsername}`);
+      return {
+        isInChannel: false,
+        ok: false,
+        status: null,
+        retryAfter: 0,
+        rateLimited: false,
+        fatal: true,
+        text: channelUnavailableText(),
+      };
+    }
+
+    if (code === 400 && /chat not found|user not found|not a participant|channel not found/i.test(description)) {
       return {
         isInChannel: false,
         ok: true,
-        text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>You haven't joined the channel yet.</b>`,
+        status: null,
+        retryAfter: 0,
+        rateLimited: false,
+        fatal: false,
+        text: channelNotJoinedText(),
       };
     }
-    console.error('[getChatMember]', err.response || err);
+
+    if (!quiet) console.error(`[getChatMember] ${code || ''} ${description || err.message || err}`);
     return {
       isInChannel: false,
       ok: false,
-      text: `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Verification is temporarily unavailable. Please try again in a moment.</b>`,
+      status: null,
+      retryAfter: 0,
+      rateLimited: false,
+      fatal: false,
+      text: channelUnavailableText(),
     };
   }
 }

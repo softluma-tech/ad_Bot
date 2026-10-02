@@ -5,7 +5,7 @@ const { getContent } = require('../models/Content');
 const { isAdmin, replyBold, sendAd, notifyAdmins, isUserInChannel } = require('./helpers');
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
-const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport } = require('./admin');
+const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport, cancelChannelScan } = require('./admin');
 const { handleBroadcastCallback, handleBroadcastMessage } = require('./broadcast');
 
 const bot = new Telegraf(config.botToken);
@@ -76,7 +76,11 @@ bot.command('admin', async (ctx) => {
 
 bot.command('cancel', async (ctx) => {
   clearState(ctx.chat.id);
-  await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Operation cancelled.</b>`);
+  const stopped = cancelChannelScan();
+  await replyBold(
+    ctx,
+    `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>${stopped ? 'Member check stopping…' : 'Operation cancelled.'}</b>`,
+  );
 });
 
 bot.command('help', async (ctx) => {
