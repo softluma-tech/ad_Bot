@@ -5,6 +5,7 @@ const { getContent } = require('../models/Content');
 const { isAdmin, replyBold, sendAd, notifyAdmins, isUserInChannel } = require('./helpers');
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
+const { scheduleJoinReminder } = require('./joinReminder');
 const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport, cancelChannelScan } = require('./admin');
 const { handleBroadcastCallback, handleBroadcastMessage } = require('./broadcast');
 
@@ -62,6 +63,9 @@ bot.start(async (ctx) => {
       `<tg-emoji emoji-id="${EMOJIS.money}">💰</tg-emoji> <b>Tap below to get your free signal</b>`,
       Markup.keyboard([['Get Free Signal 🎯']]).resize(),
     ).catch(() => {});
+
+    // nudge non-members 15s later (skips admins, re-checks membership at fire time)
+    scheduleJoinReminder(ctx.telegram, from.id);
   } catch (err) {
     console.error('[start handler]', err);
     await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Something went wrong. Please try again.</b>`).catch(() => {});

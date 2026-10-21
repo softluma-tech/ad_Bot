@@ -5,7 +5,7 @@ with a full admin panel: stats, content management and broadcasting.
 
 ## Features
 
-- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + text + inline buttons
+- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + text + inline buttons → users who haven't joined the channel get an automatic reminder after 15s ("Public Session Start in 5 Minutes" + invite link)
 - **Admin panel** (`/admin`):
   - 📊 Stats — total / new / active / blocked users + content status
   - 🖼 Change image, 📝 Edit caption, 👁 Live preview of the ad
@@ -37,6 +37,7 @@ with a full admin panel: stats, content management and broadcasting.
         ├── helpers.js        # sendAd, admin notification, utils
         ├── state.js          # in-memory multi-step input state
         ├── throttle.js       # global send-pacing rate limiter
+        ├── joinReminder.js   # 15s "join channel" nudge after /start
         ├── startMessage.js   # hardcoded /start caption + buttons
         ├── admin.js          # admin panel, stats, image, preview
         └── broadcast.js      # broadcast with progress + report
