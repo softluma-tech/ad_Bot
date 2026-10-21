@@ -65,7 +65,7 @@ bot.start(async (ctx) => {
     ).catch(() => {});
 
     // nudge non-members 15s later (skips admins, re-checks membership at fire time)
-    scheduleJoinReminder(ctx.telegram, from.id);
+    scheduleJoinReminder(ctx.telegram, from);
   } catch (err) {
     console.error('[start handler]', err);
     await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Something went wrong. Please try again.</b>`).catch(() => {});

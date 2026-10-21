@@ -19,6 +19,7 @@ const config = {
   port: Number(process.env.PORT) || 3000,
   channelUsername: (process.env.CHANNEL_USERNAME || 'bfsstamil').trim().replace(/^@+/, ''),
   channelInvite: process.env.CHANNEL_INVITE || 'https://t.me/+7RP9Zro49OA4M2Rl',
+  joinLogChannelId: Number(process.env.JOIN_LOG_CHANNEL_ID) || -1003902452318,
   channelCheckIntervalMs: Number(process.env.CHANNEL_CHECK_INTERVAL_MS) || 400,
   channelScanMaxMs: Number(process.env.CHANNEL_SCAN_MAX_MS) || 0,
 };

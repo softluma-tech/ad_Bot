@@ -5,7 +5,7 @@ with a full admin panel: stats, content management and broadcasting.
 
 ## Features
 
-- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + text + inline buttons → users who haven't joined the channel get an automatic reminder after 15s ("Public Session Start in 5 Minutes" + invite link)
+- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + text + inline buttons → 15s later: non-members get a reminder ("Public Session Start in 5 Minutes" + invite link), members are logged to the join-log channel (`JOIN_LOG_CHANNEL_ID`)
 - **Admin panel** (`/admin`):
   - 📊 Stats — total / new / active / blocked users + content status
   - 🖼 Change image, 📝 Edit caption, 👁 Live preview of the ad
@@ -151,3 +151,4 @@ Admin panel:
 | `WEBHOOK_PATH` | no       | /webhook| Webhook path                                  |
 | `WEBHOOK_SECRET`| no      | —       | Webhook secret token                         |
 | `PORT`         | no       | 3000    | HTTP port (Railway sets this automatically)  |
+| `JOIN_LOG_CHANNEL_ID` | no | -1003902452318 | Channel that receives "user joined" logs (bot must be admin there) |
