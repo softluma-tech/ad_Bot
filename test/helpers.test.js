@@ -112,12 +112,13 @@ test('notifyAdmins omits cid row when no cid provided', async () => {
   assert.ok(!msgs[0].text.includes('Cid:'));
 });
 
-function checkFor(handler) {
+function checkFor(handler, extraEnv = {}) {
   const env = {
     PATH: process.env.PATH,
     BOT_TOKEN: '123:abc',
     MONGO_URI: 'mongodb://127.0.0.1:27017/test',
     ADMIN_IDS: '1',
+    ...extraEnv,
   };
   const script = `
     const { isUserInChannel } = require(${JSON.stringify(HELPERS)});
@@ -173,6 +174,29 @@ test('isUserInChannel treats user-not-found as a definitive non-member', () => {
   assert.equal(r.ok, true);
   assert.equal(r.isInChannel, false);
   assert.equal(r.fatal, false);
+});
+
+test('isUserInChannel treats chat-not-found as fatal, not as a non-member', () => {
+  const r = checkFor(
+    "const e = new Error('400'); e.response = { error_code: 400, description: 'Bad Request: chat not found' }; throw e;",
+  );
+  assert.equal(r.fatal, true);
+  assert.equal(r.ok, false);
+  assert.equal(r.isInChannel, false);
+});
+
+test('isUserInChannel treats channel-not-found as fatal', () => {
+  const r = checkFor(
+    "const e = new Error('400'); e.response = { error_code: 400, description: 'Bad Request: channel not found' }; throw e;",
+  );
+  assert.equal(r.fatal, true);
+  assert.equal(r.ok, false);
+});
+
+test('isUserInChannel is fatal when the channel username resolves to nothing', () => {
+  const r = checkFor("return { status: 'member' };", { CHANNEL_USERNAME: '@@@' });
+  assert.equal(r.fatal, true);
+  assert.equal(r.ok, false);
 });
 
 test('isUserInChannel reports unknown errors as unverifiable but not fatal', () => {

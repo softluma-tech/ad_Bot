@@ -75,8 +75,21 @@ const channelUnavailableText = () =>
 
 async function isUserInChannel(telegram, userId, options = {}) {
   const quiet = options.quiet === true;
+  const channelRef = `@${config.channelUsername}`;
+  if (!config.channelUsername) {
+    return {
+      isInChannel: false,
+      ok: false,
+      status: null,
+      retryAfter: 0,
+      rateLimited: false,
+      fatal: true,
+      fatalReason: 'no_channel',
+      text: channelUnavailableText(),
+    };
+  }
   try {
-    const member = await telegram.getChatMember(`@${config.channelUsername}`, userId);
+    const member = await telegram.getChatMember(channelRef, userId);
     const status = member && member.status;
     const isInChannel = MEMBER_STATUSES.includes(status);
     return {
@@ -108,7 +121,7 @@ async function isUserInChannel(telegram, userId, options = {}) {
     }
 
     if (code === 403) {
-      if (!quiet) console.error(`[getChatMember] 403 — bot cannot read @${config.channelUsername}`);
+      if (!quiet) console.error(`[getChatMember] 403 — bot cannot read ${channelRef}`);
       return {
         isInChannel: false,
         ok: false,
@@ -116,11 +129,26 @@ async function isUserInChannel(telegram, userId, options = {}) {
         retryAfter: 0,
         rateLimited: false,
         fatal: true,
+        fatalReason: 'forbidden',
         text: channelUnavailableText(),
       };
     }
 
-    if (code === 400 && /chat not found|user not found|not a participant|channel not found/i.test(description)) {
+    if (code === 400 && /chat not found|channel not found|peer_id_invalid/i.test(description)) {
+      if (!quiet) console.error(`[getChatMember] 400 — channel ${channelRef} not found (${description})`);
+      return {
+        isInChannel: false,
+        ok: false,
+        status: null,
+        retryAfter: 0,
+        rateLimited: false,
+        fatal: true,
+        fatalReason: 'chat_not_found',
+        text: channelUnavailableText(),
+      };
+    }
+
+    if (code === 400 && /user not found|not a participant/i.test(description)) {
       return {
         isInChannel: false,
         ok: true,

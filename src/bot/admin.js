@@ -54,6 +54,272 @@ async function sendAdminPanel(ctx) {
   await replyBold(ctx, await adminPanelText(), panelKeyboard());
 }
 
+function buildScanFilter(runStartedAt, recheckMs) {
+  const runMs =
+    runStartedAt instanceof Date ? runStartedAt.getTime() : Number(runStartedAt);
+  const cutoffMs =
+    recheckMs > 0 ? Math.min(runMs, Date.now() - recheckMs) : runMs;
+  return {
+    isBlocked: { $ne: true },
+    $or: [
+      { channelCheckedAt: null },
+      { channelCheckedAt: { $lt: new Date(cutoffMs) } },
+    ],
+  };
+}
+
+function recheckNote() {
+  return config.channelRecheckHours > 0
+    ? `Users checked in the last ${config.channelRecheckHours}h are skipped.`
+    : "Every run re-checks all users.";
+}
+
+async function startChannelScan(ctx) {
+  if (activeScan)
+    return replyBold(
+      ctx,
+      `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>A member check is already running.</b>`,
+      panelKeyboard(),
+    );
+
+  const scan = { cancelled: false, finished: false };
+  activeScan = scan;
+
+  try {
+    const runStartedAt = new Date();
+    const pendingFilter = buildScanFilter(runStartedAt, config.channelRecheckMs);
+    const [tracked, toCheck] = await Promise.all([
+      User.countDocuments({ isBlocked: { $ne: true } }),
+      User.countDocuments(pendingFilter),
+    ]);
+
+    if (scan.cancelled) {
+      if (activeScan === scan) activeScan = null;
+      return true;
+    }
+    if (!tracked) {
+      if (activeScan === scan) activeScan = null;
+      return replyBold(
+        ctx,
+        `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>No users in the database yet.</b>`,
+        panelKeyboard(),
+      );
+    }
+    if (!toCheck) {
+      if (activeScan === scan) activeScan = null;
+      return replyBold(
+        ctx,
+        `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Nothing to check.</b>\n\n` +
+          `All ${tracked} users were already checked within the last ${config.channelRecheckHours}h.`,
+        panelKeyboard(),
+      );
+    }
+
+    const msg = await replyBold(
+      ctx,
+      `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Checking channel members…</b>\n\n` +
+        `0 / ${toCheck} checked\n` +
+        `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Channel: <b>@${escapeHtml(config.channelUsername)}</b>\n\n` +
+        `${recheckNote()} Running in the background — send /cancel to stop.`,
+      panelKeyboard(),
+    ).catch(() => null);
+
+    const messageId = msg && msg.message_id ? msg.message_id : null;
+
+    runChannelScan(ctx, scan, messageId, {
+      tracked,
+      toCheck,
+      pendingFilter,
+    }).catch((err) => {
+      console.error("[channel scan]", err);
+      if (activeScan === scan) activeScan = null;
+    });
+    return true;
+  } catch (err) {
+    if (activeScan === scan) activeScan = null;
+    throw err;
+  }
+}
+
+async function runChannelScan(ctx, scan, messageId, opts) {
+  const { tracked, toCheck, pendingFilter } = opts;
+  const baseInterval = config.channelCheckIntervalMs;
+  const maxMs = Number(config.channelScanMaxMs) || 0;
+  const deadline = maxMs > 0 ? Date.now() + maxMs : Infinity;
+  const batchSize = Math.max(25, Math.ceil(toCheck / SCAN_MAX_EDITS));
+  const gate = createThrottle(baseInterval);
+
+  let renderChain = Promise.resolve(true);
+  const render = (text, extra) => {
+    if (!messageId) return Promise.resolve(false);
+    renderChain = renderChain.then(() =>
+      ctx.telegram
+        .editMessageText(ctx.chat.id, messageId, undefined, text, {
+          ...extra,
+          parse_mode: "HTML",
+        })
+        .then(() => true)
+        .catch(() => false),
+    );
+    return renderChain;
+  };
+
+  let inChannel = 0;
+  let notInChannel = 0;
+  let checked = 0;
+  const unverified = new Set();
+  let rateLimited = 0;
+  let penalty = 0;
+  let lastId = null;
+  let fatal = null;
+  let timedOut = false;
+  let passes = 0;
+
+  const progressText = () =>
+    `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Checking channel members…</b>\n\n` +
+    `${checked} / ${toCheck} checked\n` +
+    `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> In channel: <b>${inChannel}</b>\n` +
+    `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> Not in channel: <b>${notInChannel}</b>` +
+    (unverified.size
+      ? `\n<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> Could not verify: <b>${unverified.size}</b>`
+      : "");
+
+  const checkUser = async (user) => {
+    await gate();
+    const res = await isUserInChannel(ctx.telegram, user.userId, { quiet: true });
+
+    if (res.rateLimited) {
+      rateLimited++;
+      unverified.add(user.userId);
+      const backoff = Math.min(SCAN_BACKOFF_CAP_MS, 1000 * 2 ** Math.min(penalty, 5));
+      penalty++;
+      gate.pause(res.retryAfter * 1000 + backoff);
+      gate.setInterval(baseInterval + backoff);
+      return;
+    }
+    if (res.fatal) {
+      unverified.add(user.userId);
+      fatal = res;
+      return;
+    }
+    if (!res.ok) {
+      unverified.add(user.userId);
+      return;
+    }
+
+    penalty = 0;
+    gate.setInterval(baseInterval);
+    unverified.delete(user.userId);
+    checked++;
+    if (res.isInChannel) inChannel++;
+    else notInChannel++;
+    await User.updateOne(
+      { userId: user.userId },
+      { $set: { inChannel: res.isInChannel, channelCheckedAt: new Date() } },
+    ).catch(() => {});
+  };
+
+  try {
+    for (;;) {
+      if (scan.cancelled || fatal) break;
+      if (Date.now() >= deadline) {
+        timedOut = true;
+        break;
+      }
+
+      passes++;
+      lastId = null;
+      const checkedBefore = checked;
+
+      for (;;) {
+        if (scan.cancelled || fatal) break;
+        if (Date.now() >= deadline) {
+          timedOut = true;
+          break;
+        }
+
+        const query = { ...pendingFilter };
+        if (lastId) query._id = { $gt: lastId };
+
+        const batch = await User.find(query)
+          .sort({ _id: 1 })
+          .limit(batchSize)
+          .select("userId")
+          .lean();
+        if (!batch.length) break;
+        lastId = batch[batch.length - 1]._id;
+
+        let i = 0;
+        const workers = Array.from(
+          { length: Math.min(SCAN_CONCURRENCY, batch.length) },
+          async () => {
+            while (i < batch.length) {
+              if (scan.cancelled || fatal || Date.now() >= deadline) return;
+              await checkUser(batch[i++]);
+            }
+          },
+        );
+        await Promise.all(workers);
+
+        await render(
+          passes > 1 ? `${progressText()}\n\n<i>pass ${passes}</i>` : progressText(),
+        );
+      }
+
+      if (checked === checkedBefore) break;
+    }
+  } catch (err) {
+    console.error("[channel scan]", err);
+  } finally {
+    scan.finished = true;
+    if (activeScan === scan) activeScan = null;
+  }
+
+  const [blocked, remaining] = await Promise.all([
+    User.countDocuments({ isBlocked: true }).catch(() => 0),
+    User.countDocuments(pendingFilter).catch(() => 0),
+  ]);
+
+  let header;
+  if (fatal) header = `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Member check stopped</b>`;
+  else if (scan.cancelled)
+    header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check cancelled</b>`;
+  else if (!remaining)
+    header = `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Member check complete — all users checked</b>`;
+  else if (timedOut)
+    header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check paused (time limit)</b>`;
+  else
+    header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check stopped (Telegram rate limit)</b>`;
+
+  let txt = `${header}\n\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> Users tracked: <b>${tracked}</b>\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Checked this run: <b>${checked}</b>\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> In channel: <b>${inChannel}</b>\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> Not in channel: <b>${notInChannel}</b>\n`;
+  if (unverified.size)
+    txt += `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> Could not verify: <b>${unverified.size}</b>\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.stop}">⛔️</tg-emoji> Blocked (skipped): <b>${blocked}</b>\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Remaining: <b>${remaining}</b>${remaining ? " — tap 👥 Channel Members again to continue" : ""}\n`;
+  if (!remaining && config.channelRecheckHours > 0)
+    txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> ${recheckNote()}\n`;
+  if (rateLimited)
+    txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Rate limited: <b>${rateLimited}</b> request(s), throttled automatically\n`;
+  if (fatal) {
+    txt +=
+      fatal.fatalReason === "forbidden"
+        ? `\n<b>Action needed:</b> the bot cannot read members of ` +
+          `<b>@${escapeHtml(config.channelUsername)}</b>. Add the bot as an administrator ` +
+          `with the <b>Read channel members</b> permission, then try again.`
+        : `\n<b>Action needed:</b> the bot cannot find ` +
+          `<b>@${escapeHtml(config.channelUsername)}</b>. Fix CHANNEL_USERNAME ` +
+          `(public channel username, without @) and try again.`;
+  }
+
+  const delivered = await render(txt, { reply_markup: panelKeyboard() });
+  if (!delivered)
+    await replyBold(ctx, txt, panelKeyboard()).catch(() => {});
+}
+
 async function handleAdminText(ctx, text) {
   const action = PANEL_ACTIONS[text];
   if (!action) return false;
@@ -99,208 +365,8 @@ async function handleAdminText(ctx, text) {
         panelKeyboard(),
       );
     }
-    case "channel": {
-      if (activeScan)
-        return replyBold(
-          ctx,
-          `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>A member check is already running.</b>`,
-          panelKeyboard(),
-        );
-
-      const tracked = await User.countDocuments({ isBlocked: { $ne: true } });
-      if (!tracked) {
-        return replyBold(
-          ctx,
-          `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>No users in the database yet.</b>`,
-          panelKeyboard(),
-        );
-      }
-
-      const runStartedAt = new Date();
-      const baseInterval = config.channelCheckIntervalMs;
-      const maxMs = Number(config.channelScanMaxMs) || 0;
-      const deadline = maxMs > 0 ? Date.now() + maxMs : Infinity;
-      const batchSize = Math.max(25, Math.ceil(tracked / SCAN_MAX_EDITS));
-      const gate = createThrottle(baseInterval);
-
-      const scan = { cancelled: false, finished: false };
-      activeScan = scan;
-
-      const msg = await replyBold(
-        ctx,
-        `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Checking channel members…</b>\n\n` +
-          `0 / ${tracked} checked\n` +
-          `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Channel: <b>@${escapeHtml(config.channelUsername)}</b>\n\n` +
-          `Keeps running until every user is checked. Send /cancel to stop.`,
-        panelKeyboard(),
-      );
-      const messageId = msg && msg.message_id;
-
-      let renderChain = Promise.resolve();
-      const render = (text, extra) => {
-        if (!messageId) return renderChain;
-        renderChain = renderChain
-          .then(() =>
-            ctx.telegram.editMessageText(ctx.chat.id, messageId, undefined, text, {
-              ...extra,
-              parse_mode: "HTML",
-            }),
-          )
-          .catch(() => {});
-        return renderChain;
-      };
-
-      let inChannel = 0;
-      let notInChannel = 0;
-      let unverified = 0;
-      let checked = 0;
-      let stampable = 0;
-      let rateLimited = 0;
-      let penalty = 0;
-      let lastId = null;
-      let fatal = null;
-      let timedOut = false;
-
-      const pendingFilter = {
-        isBlocked: { $ne: true },
-        $or: [
-          { channelCheckedAt: null },
-          { channelCheckedAt: { $lt: runStartedAt } },
-        ],
-      };
-
-      const progressText = () =>
-        `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Checking channel members…</b>\n\n` +
-        `${checked} / ${tracked} checked\n` +
-        `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> In channel: <b>${inChannel}</b>\n` +
-        `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> Not in channel: <b>${notInChannel}</b>` +
-        (unverified
-          ? `\n<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> Could not verify: <b>${unverified}</b>`
-          : "");
-
-      const checkUser = async (user) => {
-        await gate();
-        const res = await isUserInChannel(ctx.telegram, user.userId, { quiet: true });
-        checked++;
-
-        if (res.rateLimited) {
-          rateLimited++;
-          unverified++;
-          const backoff = Math.min(SCAN_BACKOFF_CAP_MS, 1000 * 2 ** Math.min(penalty, 5));
-          penalty++;
-          gate.pause(res.retryAfter * 1000 + backoff);
-          gate.setInterval(baseInterval + backoff);
-        } else if (res.fatal) {
-          unverified++;
-          fatal = res;
-        } else if (!res.ok) {
-          unverified++;
-        } else {
-          penalty = 0;
-          gate.setInterval(baseInterval);
-          stampable++;
-          if (res.isInChannel) inChannel++;
-          else notInChannel++;
-          await User.updateOne(
-            { userId: user.userId },
-            { $set: { inChannel: res.isInChannel, channelCheckedAt: new Date() } },
-          ).catch(() => {});
-        }
-      };
-
-      let passes = 0;
-
-      try {
-        for (;;) {
-          if (scan.cancelled || fatal) break;
-          if (Date.now() >= deadline) {
-            timedOut = true;
-            break;
-          }
-
-          passes++;
-          lastId = null;
-          const checkedBefore = checked;
-          const stampableBefore = stampable;
-
-          for (;;) {
-            if (scan.cancelled || fatal) break;
-            if (Date.now() >= deadline) {
-              timedOut = true;
-              break;
-            }
-
-            const query = { ...pendingFilter };
-            if (lastId) query._id = { $gt: lastId };
-
-            const batch = await User.find(query)
-              .sort({ _id: 1 })
-              .limit(batchSize)
-              .select("userId")
-              .lean();
-            if (!batch.length) break;
-            lastId = batch[batch.length - 1]._id;
-
-            let i = 0;
-            const workers = Array.from(
-              { length: Math.min(SCAN_CONCURRENCY, batch.length) },
-              async () => {
-                while (i < batch.length) {
-                  if (scan.cancelled || fatal || Date.now() >= deadline) return;
-                  await checkUser(batch[i++]);
-                }
-              },
-            );
-            await Promise.all(workers);
-
-            await render(
-              passes > 1 ? `${progressText()}\n\n<i>pass ${passes}</i>` : progressText(),
-            );
-          }
-
-          if (checked === checkedBefore) break;
-          if (stampable === stampableBefore) break;
-        }
-      } catch (err) {
-        console.error("[channel scan]", err);
-      }
-
-      const blocked = await User.countDocuments({ isBlocked: true });
-      const remaining = await User.countDocuments(pendingFilter);
-
-      let header;
-      if (fatal) header = `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Member check stopped</b>`;
-      else if (scan.cancelled)
-        header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check cancelled</b>`;
-      else if (!remaining)
-        header = `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Member check complete — all users checked</b>`;
-      else if (timedOut)
-        header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check paused (time limit)</b>`;
-      else
-        header = `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Member check stopped (Telegram rate limit)</b>`;
-
-      let txt = `${header}\n\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> Users tracked: <b>${tracked}</b>\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Checked this run: <b>${checked}</b>\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> In channel: <b>${inChannel}</b>\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> Not in channel: <b>${notInChannel}</b>\n`;
-      if (unverified)
-        txt += `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> Could not verify: <b>${unverified}</b>\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.stop}">⛔️</tg-emoji> Blocked (skipped): <b>${blocked}</b>\n`;
-      txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Remaining: <b>${remaining}</b>${remaining ? " — tap 👥 Channel Members again to continue" : ""}\n`;
-      if (rateLimited)
-        txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Rate limited: <b>${rateLimited}</b> request(s), throttled automatically\n`;
-      if (fatal)
-        txt +=
-          `\n<b>Action needed:</b> the bot cannot read members of ` +
-          `<b>@${escapeHtml(config.channelUsername)}</b>. Add the bot as an administrator ` +
-          `with the <b>Read channel members</b> permission, then try again.`;
-
-      scan.finished = true;
-      activeScan = null;
-      await render(txt, { reply_markup: panelKeyboard() });
-      return;
-    }
+    case "channel":
+      return startChannelScan(ctx);
     case "broadcast": {
       setState(ctx.chat.id, { action: "broadcast" });
       return replyBold(
@@ -399,4 +465,4 @@ async function handleAdminCallback(ctx, data) {
   }
 }
 
-module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, cancelChannelScan, formatReport, buildDayReport, handleDayReport };
+module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, cancelChannelScan, formatReport, buildDayReport, handleDayReport, buildScanFilter };

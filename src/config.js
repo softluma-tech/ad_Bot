@@ -17,10 +17,17 @@ const config = {
   webhookPath: process.env.WEBHOOK_PATH || '/webhook',
   webhookSecret: process.env.WEBHOOK_SECRET || '',
   port: Number(process.env.PORT) || 3000,
-  channelUsername: process.env.CHANNEL_USERNAME || 'bfsstamil',
+  channelUsername: (process.env.CHANNEL_USERNAME || 'bfsstamil').trim().replace(/^@+/, ''),
   channelInvite: process.env.CHANNEL_INVITE || 'https://t.me/+7RP9Zro49OA4M2Rl',
   channelCheckIntervalMs: Number(process.env.CHANNEL_CHECK_INTERVAL_MS) || 400,
   channelScanMaxMs: Number(process.env.CHANNEL_SCAN_MAX_MS) || 0,
 };
+
+{
+  const hours = Number(process.env.CHANNEL_RECHECK_HOURS);
+  config.channelRecheckHours =
+    Number.isFinite(hours) && hours >= 0 ? hours : 24;
+  config.channelRecheckMs = config.channelRecheckHours * 60 * 60 * 1000;
+}
 
 module.exports = config;

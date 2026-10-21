@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatReport, buildDayReport } = require('../src/bot/admin');
+const { formatReport, buildDayReport, buildScanFilter } = require('../src/bot/admin');
 
 test('formatReport lists cid with user counts', () => {
   const rows = [
@@ -53,4 +53,34 @@ test('buildDayReport marks only the latest day as today', () => {
   const txt = buildDayReport(2, rows);
   assert.ok(txt.includes('<b>Today (Today)</b>'));
   assert.ok(!txt.includes('<b>Yesterday</b>'));
+});
+
+test('buildScanFilter with no recheck window re-queues everything checked before the run', () => {
+  const run = new Date('2026-01-01T00:00:00.000Z');
+  const filter = buildScanFilter(run, 0);
+  assert.deepEqual(filter.isBlocked, { $ne: true });
+  assert.deepEqual(filter.$or, [
+    { channelCheckedAt: null },
+    { channelCheckedAt: { $lt: run } },
+  ]);
+});
+
+test('buildScanFilter with a recheck window only re-queues stale checks', () => {
+  const before = Date.now();
+  const run = new Date();
+  const filter = buildScanFilter(run, 60 * 60 * 1000);
+  const cutoff = filter.$or[1].channelCheckedAt.$lt;
+  assert.ok(cutoff instanceof Date);
+  // cutoff must be at or before the run start, and one hour before "now"
+  assert.ok(cutoff.getTime() <= run.getTime());
+  assert.ok(cutoff.getTime() <= before - 60 * 60 * 1000 + 1000);
+  assert.ok(cutoff.getTime() >= before - 60 * 60 * 1000 - 5000);
+});
+
+test('buildScanFilter never re-queues a user stamped during the current run', () => {
+  const run = new Date();
+  const filter = buildScanFilter(run, 60 * 60 * 1000);
+  const cutoff = filter.$or[1].channelCheckedAt.$lt;
+  const stampedDuringRun = new Date();
+  assert.ok(!(stampedDuringRun < cutoff));
 });
