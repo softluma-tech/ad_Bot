@@ -11,6 +11,7 @@ with a full admin panel: stats, content management and broadcasting.
   - 🖼 Change image, 📝 Edit caption, 👁 Live preview of the ad
   - 🔗 Buttons management — add (text + link), edit, reorder (⬆️⬇️), enable/disable, delete (with confirmation)
   - 📢 Broadcast — all media types (photo, video, GIF, audio, voice, document, video note, sticker, text) with caption support, live progress and final report
+  - ⛔ Broadcast (Not in Channel) — two-step: fresh channel check of **all** users, then broadcast only to those found outside the channel
 - **Modes**: development (polling) and production (webhook) — Railway ready
 - **Emoji**: premium emoji IDs are hardcoded inline in every message text via Telegram HTML (`<tg-emoji emoji-id="…">` + `<b>`, sent with `parse_mode: HTML`). Falls back to standard emojis without Premium (`src/bot/emoji.js`)
 - **Reliability**: broadcast state is persisted in MongoDB (survives restarts), a DB-backed lock prevents double broadcasts across instances, and sends are globally paced with retry/backoff on Telegram 429 rate limits
@@ -119,17 +120,21 @@ Admin panel:
 
 ```
 🎛 Admin Panel
-🖼 Image: ✅ set
+🖇 Image: ✅ set
 💬 Caption: hardcoded
 🔗 Buttons: 2 (hardcoded)
 
-[📊 Stats] [🖼 Change Image]
-[📢 Broadcast] [👁 Preview Ad] [❌ Close]
+[📊 Stats] [📊 Report]
+[📅 Day Report]
+[🖇 Change Image] [👥 Channel Members]
+[🗣 Broadcast] [⛔ Broadcast (Not in Channel)]
+[👁 Preview Ad] [❌ Close]
 ```
 
 - **Change image**: tap the button, then send a photo to the bot.
 - **Caption & buttons**: hardcoded in `src/bot/startMessage.js` (`START_CAPTION` + `START_BUTTONS`) — edit there, no admin UI.
 - **Broadcast**: tap the button, send any media (with optional caption) or text, confirm — the bot sends it to all users and reports ✅ sent / 🚫 blocked / ❌ failed.
+- **Broadcast (Not in Channel)**: tap the button — the bot first re-checks **every** user against the channel (background, live progress, `/cancel` works). When the check finishes it shows how many users are not in the channel and asks for the media/text; the broadcast then goes **only** to those non-members. Requires the bot to be a channel admin with *Read channel members* permission.
 - **Stats**: total users, new 24h/7d, active 24h, blocked, content status.
 - Use `/cancel` at any time to abort an ongoing action.
 

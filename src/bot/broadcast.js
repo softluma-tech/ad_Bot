@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { acquireBroadcastLock, releaseBroadcastLock, isBroadcasting } = require('../models/BroadcastLock');
 const { setPending, getPending, clearPending } = require('../models/Pending');
 const { delay, sendBold, replyBold, editBold, isAdmin } = require('./helpers');
+const { panelKeyboard } = require('./admin');
 const { EMOJIS, escapeHtml, truncate, stripHtml } = require('./emoji');
 const { createThrottle } = require('./throttle');
 const { clearState } = require('./state');
@@ -24,7 +25,17 @@ const MEDIA_LABELS = {
   text: `<tg-emoji emoji-id="${EMOJIS.chat}">💬</tg-emoji> Text`,
 };
 
-const TARGET_QUERY = { userId: { $nin: config.adminIds }, isBlocked: { $ne: true } };
+function buildTargetQuery(target = 'all') {
+  const base = { userId: { $nin: config.adminIds }, isBlocked: { $ne: true } };
+  if (target === 'nonChannel') return { ...base, inChannel: false };
+  return base;
+}
+
+function targetLabel(target) {
+  return target === 'nonChannel'
+    ? `<tg-emoji emoji-id="${EMOJIS.stop}">⛔️</tg-emoji> Users NOT in the channel <b>only</b>`
+    : `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> All users`;
+}
 
 function extractPayload(m) {
   const cap = (c) => truncate(c, 1024);
@@ -75,19 +86,33 @@ async function sendPayload(telegram, chatId, payload) {
   }
 }
 
-async function handleBroadcastMessage(ctx, m) {
+async function handleBroadcastMessage(ctx, m, target = 'all') {
   if (await isBroadcasting()) return replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>A broadcast is already running. Please wait.</b>`);
   const payload = extractPayload(m);
   if (!payload) return replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Unsupported media type.</b>\n\nUse /cancel to abort.`);
 
-  const total = await User.countDocuments(TARGET_QUERY);
-  await setPending(ctx.chat.id, 'broadcastConfirm', payload);
+  const total = await User.countDocuments(buildTargetQuery(target));
+
+  if (!total) {
+    return replyBold(
+      ctx,
+      `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>No users match this target.</b>\n\n` +
+        (target === 'nonChannel'
+          ? `No verified non-members found. Use 👥 Channel Members first and wait for the check to finish, then try again.`
+          : `No recipients available.`) +
+        `\n\nUse /cancel to abort.`,
+      panelKeyboard(),
+    );
+  }
+
+  await setPending(ctx.chat.id, 'broadcastConfirm', { payload, target });
 
   const label = MEDIA_LABELS[payload.type] || payload.type;
   const summary = payload.caption || payload.text || '';
   let txt = `<tg-emoji emoji-id="${EMOJIS.broadcast}">🗣</tg-emoji> <b>Broadcast preview</b>\n\n`;
   txt += `<b>Type:</b> ${label}\n`;
   if (summary) txt += `<tg-emoji emoji-id="${EMOJIS.chat}">💬</tg-emoji> ${escapeHtml(truncate(summary, 100))}\n`;
+  txt += `<b>Target:</b> ${targetLabel(target)}\n`;
   txt += `<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> Will receive: <b>${total}</b> users\n\n`;
   txt += 'Confirm?';
 
@@ -121,11 +146,12 @@ async function handleBroadcastCallback(ctx, data) {
 
   await clearPending(chatId);
   clearState(chatId);
-  const payload = state.payload;
+  const { payload, target = 'all' } = state.payload || {};
+  if (!payload) return ctx.answerCbQuery('⚠️ Nothing queued');
   const messageId = ctx.callbackQuery.message.message_id;
 
   try {
-    const users = await User.find(TARGET_QUERY);
+    const users = await User.find(buildTargetQuery(target));
     const total = users.length;
     let sent = 0;
     let blocked = 0;
@@ -198,4 +224,4 @@ async function handleBroadcastCallback(ctx, data) {
   }
 }
 
-module.exports = { handleBroadcastMessage, handleBroadcastCallback, extractPayload, sendPayload, MEDIA_LABELS };
+module.exports = { handleBroadcastMessage, handleBroadcastCallback, extractPayload, sendPayload, buildTargetQuery, targetLabel, MEDIA_LABELS };

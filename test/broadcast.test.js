@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extractPayload, sendPayload, MEDIA_LABELS } = require('../src/bot/broadcast');
+const config = require('../src/config');
+const { extractPayload, sendPayload, buildTargetQuery, targetLabel, MEDIA_LABELS } = require('../src/bot/broadcast');
 
 test('extracts photo using the largest file_id', () => {
   const payload = extractPayload({ photo: [{ file_id: 'a' }, { file_id: 'b' }] });
@@ -64,4 +65,30 @@ test('sendPayload rethrows non-parse errors', async () => {
     sendPayload(telegram, 1, { type: 'photo', fileId: 'f', caption: '<b>hi</b>' }),
     (err) => err.response.error_code === 403,
   );
+});
+
+test("buildTargetQuery('all') excludes admins and blocked users", () => {
+  const query = buildTargetQuery('all');
+  assert.deepEqual(query.userId, { $nin: config.adminIds });
+  assert.deepEqual(query.isBlocked, { $ne: true });
+  assert.equal('inChannel' in query, false);
+});
+
+test("buildTargetQuery('nonChannel') targets verified non-members only", () => {
+  const query = buildTargetQuery('nonChannel');
+  assert.deepEqual(query.userId, { $nin: config.adminIds });
+  assert.deepEqual(query.isBlocked, { $ne: true });
+  assert.equal(query.inChannel, false);
+});
+
+test('buildTargetQuery defaults to all users for unknown/missing target', () => {
+  for (const target of [undefined, null, '', 'everyone', 'channel']) {
+    assert.equal('inChannel' in buildTargetQuery(target), false);
+  }
+});
+
+test('targetLabel distinguishes the two targets', () => {
+  assert.ok(targetLabel('nonChannel').includes('NOT in the channel'));
+  assert.ok(!targetLabel('all').includes('NOT in the channel'));
+  assert.ok(targetLabel('all').includes('All users'));
 });

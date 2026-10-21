@@ -150,7 +150,7 @@ bot.on('message', async (ctx) => {
         return sendAdminPanel(ctx);
       }
       case 'broadcast':
-        return handleBroadcastMessage(ctx, m);
+        return handleBroadcastMessage(ctx, m, (state.target) || 'all');
       case 'dayreport': {
         const days = Number(m.text.trim());
         if (!Number.isInteger(days) || days < 1) {
