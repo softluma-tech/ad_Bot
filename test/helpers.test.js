@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const HELPERS = path.join(__dirname, '..', 'src', 'bot', 'helpers.js');
+const { isValidHttpUrl } = require(HELPERS);
 
 function isAdminFor(adminIds, id) {
   const env = {
@@ -206,4 +207,50 @@ test('isUserInChannel reports unknown errors as unverifiable but not fatal', () 
   assert.equal(r.ok, false);
   assert.equal(r.fatal, false);
   assert.equal(r.rateLimited, false);
+});
+
+function startLinkCalls() {
+  const env = {
+    PATH: process.env.PATH,
+    BOT_TOKEN: '123:abc',
+    MONGO_URI: 'mongodb://127.0.0.1:27017/test',
+    ADMIN_IDS: '1',
+  };
+  const script = `
+    const { sendStartLink } = require(${JSON.stringify(HELPERS)});
+    const calls = [];
+    const tg = {
+      sendMessage: async (chatId, text, extra) => {
+        calls.push({ chatId, text, extra });
+        return { message_id: calls.length };
+      },
+    };
+    sendStartLink(tg, 99)
+      .then(() => process.stdout.write(JSON.stringify(calls)))
+      .catch((e) => { console.error(e); process.exit(1); });
+  `;
+  const res = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8' });
+  if (res.status !== 0) throw new Error(res.stderr);
+  return JSON.parse(res.stdout);
+}
+
+test('sendStartLink sends the channel invite with previews disabled', () => {
+  const calls = startLinkCalls();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].text, require('../src/config').channelInvite);
+  assert.equal(calls[0].extra.parse_mode, 'HTML');
+  assert.deepEqual(calls[0].extra.link_preview_options, { is_disabled: true });
+});
+
+test('isValidHttpUrl accepts http and https links', () => {
+  assert.equal(isValidHttpUrl('https://t.me/Bfssfreevipbot'), true);
+  assert.equal(isValidHttpUrl('  http://example.com/path?x=1  '), true);
+});
+
+test('isValidHttpUrl rejects non-http links and junk', () => {
+  assert.equal(isValidHttpUrl('t.me/Bfssfreevipbot'), false);
+  assert.equal(isValidHttpUrl('ftp://example.com'), false);
+  assert.equal(isValidHttpUrl('not a link'), false);
+  assert.equal(isValidHttpUrl(''), false);
+  assert.equal(isValidHttpUrl(null), false);
 });

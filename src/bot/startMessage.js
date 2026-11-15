@@ -11,7 +11,6 @@ const { channelInvite } = require('../config');
 
 const START_BUTTONS = [
   { text: 'Join Free VIP', url: channelInvite, colour: 'primary' },
-  { text: 'Join Instagram', url: 'https://www.instagram.com/bfsstamil', colour: 'danger' },
 ];
 
 module.exports = { START_CAPTION, START_BUTTONS };

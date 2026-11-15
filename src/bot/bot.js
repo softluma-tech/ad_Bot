@@ -1,8 +1,8 @@
 const { Telegraf, Markup } = require('telegraf');
 const config = require('../config');
 const User = require('../models/User');
-const { getContent } = require('../models/Content');
-const { isAdmin, replyBold, sendAd, notifyAdmins, isUserInChannel } = require('./helpers');
+const { getContent, DEFAULT_VIP_URL } = require('../models/Content');
+const { isAdmin, isValidHttpUrl, replyBold, sendAd, sendStartVoice, sendStartLink, notifyAdmins, isUserInChannel } = require('./helpers');
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
 const { scheduleJoinReminder } = require('./joinReminder');
@@ -58,6 +58,8 @@ bot.start(async (ctx) => {
     const name = from.first_name || 'there';
     await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.smile}">🙂</tg-emoji> <b>Welcome, ${escapeHtml(name)}!</b>`).catch(() => {});
     await sendAd(ctx.telegram, from.id);
+    await sendStartVoice(ctx.telegram, from.id);
+    await sendStartLink(ctx.telegram, from.id);
     await replyBold(
       ctx,
       `<tg-emoji emoji-id="${EMOJIS.money}">💰</tg-emoji> <b>Tap below to get your free signal</b>`,
@@ -116,11 +118,14 @@ async function handleGetFreeSignal(ctx) {
     return;
   }
 
+  const content = await getContent();
+  const vipUrl = content.vipUrl || DEFAULT_VIP_URL;
+
   await replyBold(
     ctx,
     `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>You're a member! Access your free VIP signal:</b>`,
     Markup.inlineKeyboard([
-      Markup.button.url('Free VIP Access', 'https://t.me/Bfssfreevipbot'),
+      Markup.button.url('Free VIP Access', vipUrl),
     ]),
   ).catch(() => {});
 }
@@ -151,6 +156,26 @@ bot.on('message', async (ctx) => {
         await content.save();
         clearState(ctx.chat.id);
         await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Image updated!</b>`);
+        return sendAdminPanel(ctx);
+      }
+      case 'setVoice': {
+        if (!m.voice)
+          return replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Please send a voice message.</b>\n\nUse /cancel to abort.`);
+        const content = await getContent();
+        content.voiceFileId = m.voice.file_id;
+        await content.save();
+        clearState(ctx.chat.id);
+        await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Voice updated!</b>`);
+        return sendAdminPanel(ctx);
+      }
+      case 'setVipUrl': {
+        if (!isValidHttpUrl(m.text))
+          return replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Please send a valid http(s) link.</b>\n\nUse /cancel to abort.`);
+        const content = await getContent();
+        content.vipUrl = m.text.trim();
+        await content.save();
+        clearState(ctx.chat.id);
+        await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>VIP link updated!</b>`);
         return sendAdminPanel(ctx);
       }
       case 'broadcast':

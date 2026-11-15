@@ -1,8 +1,8 @@
 const { Markup } = require("telegraf");
 const config = require("../config");
 const User = require("../models/User");
-const { getContent } = require("../models/Content");
-const { isAdmin, sendAd, replyBold, isUserInChannel } = require("./helpers");
+const { getContent, DEFAULT_VIP_URL } = require("../models/Content");
+const { isAdmin, sendStartSequence, replyBold, isUserInChannel } = require("./helpers");
 const { EMOJIS, escapeHtml } = require("./emoji");
 const { START_BUTTONS } = require("./startMessage");
 const { setState } = require("./state");
@@ -25,6 +25,8 @@ const PANEL_ACTIONS = {
   "📊 Report": "report",
   "📅 Day Report": "dayreport",
   "🖇 Change Image": "image",
+  "🎙 Change Voice": "voice",
+  "🔗 VIP Link": "vipLink",
   "👥 Channel Members": "channel",
   "🗣 Broadcast": "broadcast",
   "⛔ Broadcast (Not in Channel)": "broadcastNonChannel",
@@ -36,7 +38,8 @@ const panelKeyboard = () =>
   Markup.keyboard([
     ["📊 Stats", "📊 Report"],
     ["📅 Day Report"],
-    ["🖇 Change Image", "👥 Channel Members"],
+    ["🖇 Change Image", "🎙 Change Voice"],
+    ["🔗 VIP Link", "👥 Channel Members"],
     ["🗣 Broadcast", "⛔ Broadcast (Not in Channel)"],
     ["👁 Preview Ad", "❌ Close"],
   ]).resize();
@@ -45,6 +48,8 @@ async function adminPanelText() {
   const content = await getContent();
   let txt = `<tg-emoji emoji-id="${EMOJIS.gear}">⚙️</tg-emoji> <b>Admin Panel</b>\n\n`;
   txt += `<tg-emoji emoji-id="${EMOJIS.paperclip}">🖇</tg-emoji> Image: ${content.imageFileId ? "<b>☑️ set</b>" : "<b>❌ not set</b>"}\n\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.audio}">🎙</tg-emoji> Voice: ${content.voiceFileId ? "<b>☑️ set</b>" : "<b>❌ not set</b>"}\n\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> VIP Link: <b>${escapeHtml(content.vipUrl || DEFAULT_VIP_URL)}</b>\n\n`;
   txt += `<tg-emoji emoji-id="${EMOJIS.chat}">💬</tg-emoji> Caption: <b>hardcoded</b>\n\n`;
   txt += `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Buttons: <b>${START_BUTTONS.length} (hardcoded)</b>\n\n`;
   txt += "Choose an action:";
@@ -384,6 +389,8 @@ async function handleAdminText(ctx, text) {
         `<tg-emoji emoji-id="${EMOJIS.stop}">⛔️</tg-emoji> Blocked: <b>${blocked}</b>\n\n` +
         `<tg-emoji emoji-id="${EMOJIS.book}">📚</tg-emoji> <b>Content</b>\n` +
         `<tg-emoji emoji-id="${EMOJIS.paperclip}">🖇</tg-emoji> Image: ${content.imageFileId ? "<b>☑️</b>" : "<b>❌</b>"}\n` +
+        `<tg-emoji emoji-id="${EMOJIS.audio}">🎙</tg-emoji> Voice: ${content.voiceFileId ? "<b>☑️</b>" : "<b>❌</b>"}\n` +
+        `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> VIP Link: <b>${escapeHtml(content.vipUrl || DEFAULT_VIP_URL)}</b>\n` +
         `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Buttons: <b>${START_BUTTONS.length} (hardcoded)</b>`;
       return replyBold(ctx, txt, panelKeyboard());
     }
@@ -400,6 +407,22 @@ async function handleAdminText(ctx, text) {
       return replyBold(
         ctx,
         `<tg-emoji emoji-id="${EMOJIS.paperclip}">🖇</tg-emoji> <b>Send the new image (photo).</b>\n\nUse /cancel to abort.`,
+        panelKeyboard(),
+      );
+    }
+    case "voice": {
+      setState(ctx.chat.id, { action: "setVoice" });
+      return replyBold(
+        ctx,
+        `<tg-emoji emoji-id="${EMOJIS.audio}">🎙</tg-emoji> <b>Send the new voice message.</b>\n\nUse /cancel to abort.`,
+        panelKeyboard(),
+      );
+    }
+    case "vipLink": {
+      setState(ctx.chat.id, { action: "setVipUrl" });
+      return replyBold(
+        ctx,
+        `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> <b>Send the new VIP link (http:// or https://).</b>\n\nUse /cancel to abort.`,
         panelKeyboard(),
       );
     }
@@ -424,7 +447,7 @@ async function handleAdminText(ctx, text) {
       );
     }
     case "preview":
-      return sendAd(ctx.telegram, ctx.from.id);
+      return sendStartSequence(ctx.telegram, ctx.from.id);
     case "close":
       return replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Panel closed.</b>`, {
         reply_markup: { remove_keyboard: true },

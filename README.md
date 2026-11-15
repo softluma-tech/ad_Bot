@@ -5,10 +5,10 @@ with a full admin panel: stats, content management and broadcasting.
 
 ## Features
 
-- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + text + inline buttons → 15s later: non-members get a reminder ("Public Session Start in 5 Minutes" + invite link), members are logged to the join-log channel (`JOIN_LOG_CHANNEL_ID`)
+- **User flow**: `/start` → admin gets a "new user" notification → bot sends image + caption + inline buttons → voice message → channel invite link (preview disabled) → 15s later: non-members get a reminder ("Public Session Start in 5 Minutes" + invite link), members are logged to the join-log channel (`JOIN_LOG_CHANNEL_ID`)
 - **Admin panel** (`/admin`):
   - 📊 Stats — total / new / active / blocked users + content status
-  - 🖼 Change image, 📝 Edit caption, 👁 Live preview of the ad
+  - 🖼 Change image, 🎙 Change voice, 🔗 VIP link, 📝 Edit caption, 👁 Live preview of the ad
   - 🔗 Buttons management — add (text + link), edit, reorder (⬆️⬇️), enable/disable, delete (with confirmation)
   - 📢 Broadcast — all media types (photo, video, GIF, audio, voice, document, video note, sticker, text) with caption support, live progress and final report
   - ⛔ Broadcast (Not in Channel) — two-step: fresh channel check of **all** users, then broadcast only to those found outside the channel
@@ -29,12 +29,12 @@ with a full admin panel: stats, content management and broadcasting.
     ├── index.js              # entry — picks polling (dev) or webhook (prod)
     ├── config.js             # env config
     ├── db.js                 # MongoDB connection
-    ├── models/               # User, Content (image + caption + buttons),
+    ├── models/               # User, Content (image + voice + caption + buttons),
     │                         # Pending (persisted broadcast state),
     │                         # BroadcastLock (cross-instance broadcast lock)
     └── bot/
         ├── bot.js            # Telegraf instance, commands, state machine
-        ├── helpers.js        # sendAd, admin notification, utils
+        ├── helpers.js        # sendAd, start voice/link sequence, admin notification, utils
         ├── state.js          # in-memory multi-step input state
         ├── throttle.js       # global send-pacing rate limiter
         ├── joinReminder.js   # 15s "join channel" nudge after /start
@@ -114,7 +114,7 @@ Premium emoji IDs are hardcoded directly in the message text using Telegram's HT
 
 ## Usage
 
-- **Users**: send `/start` → see the ad (image + text + buttons).
+- **Users**: send `/start` → see the ad (image + text + buttons), a voice message, and the channel invite link without a preview.
 - **Admins**: send `/admin` to open the panel.
 
 Admin panel:
@@ -122,17 +122,22 @@ Admin panel:
 ```
 🎛 Admin Panel
 🖇 Image: ✅ set
+🎙 Voice: ✅ set
+🔗 VIP Link: https://t.me/Bfssfreevipbot
 💬 Caption: hardcoded
 🔗 Buttons: 2 (hardcoded)
 
 [📊 Stats] [📊 Report]
 [📅 Day Report]
-[🖇 Change Image] [👥 Channel Members]
+[🖇 Change Image] [🎙 Change Voice]
+[🔗 VIP Link] [👥 Channel Members]
 [🗣 Broadcast] [⛔ Broadcast (Not in Channel)]
 [👁 Preview Ad] [❌ Close]
 ```
 
 - **Change image**: tap the button, then send a photo to the bot.
+- **Change voice**: tap the button, then send a voice message to the bot (it is played on every `/start`; skipped if unset).
+- **VIP Link**: tap the button, then send the new destination URL (`http://` or `https://`) for the **Free VIP Access** button shown after a user taps **Get Free Signal 🎯** and is verified as a channel member.
 - **Caption & buttons**: hardcoded in `src/bot/startMessage.js` (`START_CAPTION` + `START_BUTTONS`) — edit there, no admin UI.
 - **Broadcast**: tap the button, send any media (with optional caption) or text, confirm — the bot sends it to all users and reports ✅ sent / 🚫 blocked / ❌ failed.
 - **Broadcast (Not in Channel)**: tap the button — the bot first re-checks **every** user against the channel (background, live progress, `/cancel` works). When the check finishes it shows how many users are not in the channel and asks for the media/text; the broadcast then goes **only** to those non-members. Requires the bot to be a channel admin with *Read channel members* permission.

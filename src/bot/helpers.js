@@ -1,9 +1,19 @@
+const { URL } = require('node:url');
 const config = require('../config');
 const { getContent } = require('../models/Content');
 const { EMOJIS, escapeHtml, stripHtml } = require('./emoji');
 const { START_CAPTION, START_BUTTONS } = require('./startMessage');
 
 const isAdmin = (userId) => config.adminIds.includes(Number(userId));
+
+const isValidHttpUrl = (text) => {
+  try {
+    const url = new URL(String(text ?? '').trim());
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,6 +70,38 @@ async function sendAd(telegram, chatId) {
   } else {
     await sendBold(telegram, chatId, START_CAPTION, { reply_markup });
   }
+}
+
+async function sendStartVoice(telegram, chatId) {
+  const content = await getContent();
+  if (!content.voiceFileId) return null;
+  try {
+    return await telegram.sendVoice(chatId, content.voiceFileId);
+  } catch (err) {
+    console.error('[start voice]', err.message);
+    return null;
+  }
+}
+
+async function sendStartLink(telegram, chatId) {
+  try {
+    return await sendBold(telegram, chatId, config.channelInvite, {
+      link_preview_options: { is_disabled: true },
+    });
+  } catch (err) {
+    if (err && err.response && err.response.error_code === 400) {
+      return sendBold(telegram, chatId, config.channelInvite, {
+        disable_web_page_preview: true,
+      });
+    }
+    throw err;
+  }
+}
+
+async function sendStartSequence(telegram, chatId) {
+  await sendAd(telegram, chatId);
+  await sendStartVoice(telegram, chatId);
+  await sendStartLink(telegram, chatId);
 }
 
 const MEMBER_STATUSES = ['creator', 'administrator', 'member'];
@@ -199,4 +241,18 @@ async function notifyAdmins(telegram, from, total, cid, isReturning = false, isI
   }
 }
 
-module.exports = { isAdmin, delay, sendBold, replyBold, editBold, editBoldCtx, sendAd, notifyAdmins, isUserInChannel };
+module.exports = {
+  isAdmin,
+  isValidHttpUrl,
+  delay,
+  sendBold,
+  replyBold,
+  editBold,
+  editBoldCtx,
+  sendAd,
+  sendStartVoice,
+  sendStartLink,
+  sendStartSequence,
+  notifyAdmins,
+  isUserInChannel,
+};
