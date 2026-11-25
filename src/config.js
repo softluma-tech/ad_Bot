@@ -22,13 +22,12 @@ const config = {
   joinLogChannelId: Number(process.env.JOIN_LOG_CHANNEL_ID) || -1003902452318,
   channelCheckIntervalMs: Number(process.env.CHANNEL_CHECK_INTERVAL_MS) || 400,
   channelScanMaxMs: Number(process.env.CHANNEL_SCAN_MAX_MS) || 0,
+  channelId: process.env.CHANNEL_ID || '',
+  attributionSecret: process.env.BOT_ATTRIBUTION_SECRET || '',
+  metaPixelId: process.env.META_PIXEL_ID || '',
+  metaAccessToken: process.env.META_ACCESS_TOKEN || '',
+  metaApiVersion: process.env.META_API_VERSION || 'v25.0',
+  metaTestEventCode: process.env.META_TEST_EVENT_CODE || '',
 };
-
-{
-  const hours = Number(process.env.CHANNEL_RECHECK_HOURS);
-  config.channelRecheckHours =
-    Number.isFinite(hours) && hours >= 0 ? hours : 24;
-  config.channelRecheckMs = config.channelRecheckHours * 60 * 60 * 1000;
-}
 
 module.exports = config;

@@ -5,8 +5,10 @@ const { getContent, DEFAULT_VIP_URL } = require("../models/Content");
 const { isAdmin, sendStartSequence, replyBold, isUserInChannel } = require("./helpers");
 const { EMOJIS, escapeHtml } = require("./emoji");
 const { START_BUTTONS } = require("./startMessage");
-const { setState } = require("./state");
+const { setState, clearState } = require("./state");
 const { createThrottle } = require("./throttle");
+const { showMetaSettings } = require('./metaAdmin');
+const { safelyObserve } = require('../tracking');
 
 const SCAN_CONCURRENCY = 3;
 const SCAN_MAX_EDITS = 40;
@@ -14,7 +16,7 @@ const SCAN_BACKOFF_CAP_MS = 30 * 1000;
 
 let activeScan = null;
 
-function cancelChannelScan() {
+function cancelBroadcastScan() {
   if (!activeScan) return false;
   activeScan.cancelled = true;
   return true;
@@ -27,10 +29,10 @@ const PANEL_ACTIONS = {
   "🖇 Change Image": "image",
   "🎙 Change Voice": "voice",
   "🔗 VIP Link": "vipLink",
-  "👥 Channel Members": "channel",
   "🗣 Broadcast": "broadcast",
   "⛔ Broadcast (Not in Channel)": "broadcastNonChannel",
   "👁 Preview Ad": "preview",
+  "📈 Meta Tracking": "meta",
   "❌ Close": "close",
 };
 
@@ -39,8 +41,9 @@ const panelKeyboard = () =>
     ["📊 Stats", "📊 Report"],
     ["📅 Day Report"],
     ["🖇 Change Image", "🎙 Change Voice"],
-    ["🔗 VIP Link", "👥 Channel Members"],
+    ["🔗 VIP Link"],
     ["🗣 Broadcast", "⛔ Broadcast (Not in Channel)"],
+    ['📈 Meta Tracking'],
     ["👁 Preview Ad", "❌ Close"],
   ]).resize();
 
@@ -57,32 +60,22 @@ async function adminPanelText() {
 }
 
 async function sendAdminPanel(ctx) {
+  clearState(ctx.chat.id);
   await replyBold(ctx, await adminPanelText(), panelKeyboard());
 }
 
-function buildScanFilter(runStartedAt, recheckMs) {
-  const runMs =
-    runStartedAt instanceof Date ? runStartedAt.getTime() : Number(runStartedAt);
-  const cutoffMs =
-    recheckMs > 0 ? Math.min(runMs, Date.now() - recheckMs) : runMs;
+function buildBroadcastScanFilter(runStartedAt) {
   return {
     isBlocked: { $ne: true },
     $or: [
       { channelCheckedAt: null },
-      { channelCheckedAt: { $lt: new Date(cutoffMs) } },
+      { channelCheckedAt: { $lt: runStartedAt } },
     ],
   };
 }
 
-function recheckNote() {
-  return config.channelRecheckHours > 0
-    ? `Users checked in the last ${config.channelRecheckHours}h are skipped.`
-    : "Every run re-checks all users.";
-}
-
 async function startNonChannelBroadcast(ctx) {
-  return startChannelScan(ctx, {
-    forceAll: true,
+  return startBroadcastScan(ctx, {
     introText:
       `<tg-emoji emoji-id="${EMOJIS.broadcast}">🗣</tg-emoji> <b>Broadcast to non-members</b>\n\n` +
       `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>Step 1:</b> fresh channel check — verifying ALL users…\n` +
@@ -100,8 +93,7 @@ async function startNonChannelBroadcast(ctx) {
   });
 }
 
-async function startChannelScan(ctx, opts = {}) {
-  const { forceAll = false, onDone = null, introText = null } = opts;
+async function startBroadcastScan(ctx, { onDone, introText }) {
   if (activeScan)
     return replyBold(
       ctx,
@@ -114,10 +106,7 @@ async function startChannelScan(ctx, opts = {}) {
 
   try {
     const runStartedAt = new Date();
-    const pendingFilter = buildScanFilter(
-      runStartedAt,
-      forceAll ? 0 : config.channelRecheckMs,
-    );
+    const pendingFilter = buildBroadcastScanFilter(runStartedAt);
     const [tracked, toCheck] = await Promise.all([
       User.countDocuments({ isBlocked: { $ne: true } }),
       User.countDocuments(pendingFilter),
@@ -140,27 +129,20 @@ async function startChannelScan(ctx, opts = {}) {
       return replyBold(
         ctx,
         `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>Nothing to check.</b>\n\n` +
-          `All ${tracked} users were already checked within the last ${config.channelRecheckHours}h.`,
+          `All ${tracked} users were already checked for this broadcast.`,
         panelKeyboard(),
       );
     }
 
-    const note = forceAll
-      ? "All users are being re-checked from scratch."
-      : recheckNote();
     const msg = await replyBold(
       ctx,
-      introText ||
-        (`<tg-emoji emoji-id="${EMOJIS.globe}">🌐</tg-emoji> <b>Checking channel members…</b>\n\n` +
-          `0 / ${toCheck} checked\n` +
-          `<tg-emoji emoji-id="${EMOJIS.link}">🔗</tg-emoji> Channel: <b>@${escapeHtml(config.channelUsername)}</b>\n\n` +
-          `${note} Running in the background — send /cancel to stop.`),
+      introText,
       panelKeyboard(),
     ).catch(() => null);
 
     const messageId = msg && msg.message_id ? msg.message_id : null;
 
-    runChannelScan(ctx, scan, messageId, {
+    runBroadcastScan(ctx, scan, messageId, {
       tracked,
       toCheck,
       pendingFilter,
@@ -176,7 +158,7 @@ async function startChannelScan(ctx, opts = {}) {
   }
 }
 
-async function runChannelScan(ctx, scan, messageId, opts) {
+async function runBroadcastScan(ctx, scan, messageId, opts) {
   const { tracked, toCheck, pendingFilter, onDone } = opts;
   const baseInterval = config.channelCheckIntervalMs;
   const maxMs = Number(config.channelScanMaxMs) || 0;
@@ -248,6 +230,7 @@ async function runChannelScan(ctx, scan, messageId, opts) {
     checked++;
     if (res.isInChannel) inChannel++;
     else notInChannel++;
+    await safelyObserve(user.userId, res);
     await User.updateOne(
       { userId: user.userId },
       { $set: { inChannel: res.isInChannel, channelCheckedAt: new Date() } },
@@ -334,9 +317,7 @@ async function runChannelScan(ctx, scan, messageId, opts) {
   if (unverified.size)
     txt += `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> Could not verify: <b>${unverified.size}</b>\n`;
   txt += `<tg-emoji emoji-id="${EMOJIS.stop}">⛔️</tg-emoji> Blocked (skipped): <b>${blocked}</b>\n`;
-  txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Remaining: <b>${remaining}</b>${remaining ? " — tap 👥 Channel Members again to continue" : ""}\n`;
-  if (!remaining && config.channelRecheckHours > 0)
-    txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> ${recheckNote()}\n`;
+  txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Remaining: <b>${remaining}</b>${remaining ? " — restart Broadcast (Not in Channel) to run a fresh check" : ""}\n`;
   if (rateLimited)
     txt += `<tg-emoji emoji-id="${EMOJIS.info}">ℹ️</tg-emoji> Rate limited: <b>${rateLimited}</b> request(s), throttled automatically\n`;
   if (fatal) {
@@ -369,6 +350,8 @@ async function handleAdminText(ctx, text) {
   if (!isAdmin(ctx.from.id)) return true;
 
   switch (action) {
+    case 'meta':
+      return showMetaSettings(ctx);
     case "stats": {
       const now = Date.now();
       const day = 24 * 60 * 60 * 1000;
@@ -426,8 +409,6 @@ async function handleAdminText(ctx, text) {
         panelKeyboard(),
       );
     }
-    case "channel":
-      return startChannelScan(ctx);
     case "broadcast": {
       setState(ctx.chat.id, { action: "broadcast", target: "all" });
       return replyBold(
@@ -528,4 +509,4 @@ async function handleAdminCallback(ctx, data) {
   }
 }
 
-module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, cancelChannelScan, formatReport, buildDayReport, handleDayReport, buildScanFilter, panelKeyboard };
+module.exports = { sendAdminPanel, handleAdminText, handleAdminCallback, cancelBroadcastScan, formatReport, buildDayReport, handleDayReport, buildBroadcastScanFilter, panelKeyboard };

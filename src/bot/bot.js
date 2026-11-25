@@ -6,8 +6,10 @@ const { isAdmin, isValidHttpUrl, replyBold, sendAd, sendStartVoice, sendStartLin
 const { EMOJIS, escapeHtml } = require('./emoji');
 const { getState, clearState } = require('./state');
 const { scheduleJoinReminder } = require('./joinReminder');
-const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport, cancelChannelScan } = require('./admin');
+const { sendAdminPanel, handleAdminText, handleAdminCallback, handleDayReport, cancelBroadcastScan } = require('./admin');
 const { handleBroadcastCallback, handleBroadcastMessage } = require('./broadcast');
+const tracking = require('../tracking');
+const { handleMetaCallback, handleMetaText } = require('./metaAdmin');
 
 const bot = new Telegraf(config.botToken);
 
@@ -27,31 +29,45 @@ bot.use(async (ctx, next) => {
 bot.start(async (ctx) => {
   try {
     const from = ctx.from;
-    const existing = await User.findOne({ userId: from.id });
-    const isNew = !existing;
-    const cid = (ctx.startPayload || '').trim() || null;
+    const startPayload = (ctx.startPayload || '').trim();
+    let cid = startPayload.startsWith('ref_') ? null : startPayload || null;
 
-    await User.updateOne(
-      { userId: from.id },
-      {
-        $set: {
-          firstName: from.first_name || '',
-          lastName: from.last_name || '',
-          username: from.username || null,
-          isBlocked: false,
-          ...(cid ? { cid } : {}),
-        },
-        $setOnInsert: { firstSeen: new Date() },
+    const update = {
+      $set: {
+        firstName: from.first_name || '', lastName: from.last_name || '',
+        username: from.username || null, isBlocked: false,
+        ...(cid ? { cid } : {}),
       },
-      { upsert: true }
-    );
+      $setOnInsert: {
+        firstSeen: new Date(), firstStartPayload: startPayload || null,
+        acquisitionEligible: !isAdmin(from.id) && /^ref_[A-Za-z0-9_-]{1,60}$/.test(startPayload),
+      },
+    };
+    let result;
+    try {
+      result = await User.updateOne({ userId: from.id }, update, { upsert: true });
+    } catch (err) {
+      if (err.code !== 11000) throw err;
+      // Another simultaneous /start created this Telegram user first.
+      result = await User.updateOne({ userId: from.id }, { $set: update.$set });
+    }
+    const isNew = result.upsertedCount === 1;
+    if (startPayload.startsWith('ref_')) {
+      try {
+        cid = await tracking.bindAttribution(from.id, startPayload);
+        if (cid) await User.updateOne({ userId: from.id }, { $set: { cid } });
+      } catch (err) { console.error('[tracking] attribution binding failed:', err.name); }
+    }
+
+    const membership = await isUserInChannel(ctx.telegram, from.id, { quiet: true });
+    await tracking.safelyObserve(from.id, membership);
+    await User.updateOne({ userId: from.id }, { $set: { trackingInitialized: true } });
+    // Reconcile a transition that arrived while /start was binding attribution.
+    await tracking.safelyObserve(from.id, membership);
 
     if (isNew || cid) {
       const total = await User.countDocuments();
-      let isInChannel = null;
-      try {
-        ({ isInChannel } = await isUserInChannel(ctx.telegram, from.id));
-      } catch {}
+      const isInChannel = membership.ok ? membership.isInChannel : null;
       await notifyAdmins(ctx.telegram, from, total, cid, !isNew, isInChannel);
     }
 
@@ -67,11 +83,16 @@ bot.start(async (ctx) => {
     ).catch(() => {});
 
     // nudge non-members 15s later (skips admins, re-checks membership at fire time)
-    scheduleJoinReminder(ctx.telegram, from);
+    scheduleJoinReminder(ctx.telegram, from, undefined, tracking.safelyObserve);
   } catch (err) {
     console.error('[start handler]', err);
     await replyBold(ctx, `<tg-emoji emoji-id="${EMOJIS.cross}">❌</tg-emoji> <b>Something went wrong. Please try again.</b>`).catch(() => {});
   }
+});
+
+bot.on('chat_member', async (ctx) => {
+  try { await tracking.handleChatMember(ctx.update.chat_member); }
+  catch (err) { console.error('[tracking] channel update failed:', err.name); }
 });
 
 bot.command('admin', async (ctx) => {
@@ -82,7 +103,7 @@ bot.command('admin', async (ctx) => {
 
 bot.command('cancel', async (ctx) => {
   clearState(ctx.chat.id);
-  const stopped = cancelChannelScan();
+  const stopped = cancelBroadcastScan();
   await replyBold(
     ctx,
     `<tg-emoji emoji-id="${EMOJIS.check}">☑️</tg-emoji> <b>${stopped ? 'Member check stopping…' : 'Operation cancelled.'}</b>`,
@@ -95,6 +116,7 @@ bot.command('help', async (ctx) => {
 
 bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data || '';
+  if (data.startsWith('meta:')) return handleMetaCallback(ctx, data);
   if (data.startsWith('adm:')) return handleAdminCallback(ctx, data);
   if (data.startsWith('bc:')) return handleBroadcastCallback(ctx, data);
   if (data === 'gfs:check') return handleGetFreeSignal(ctx);
@@ -102,10 +124,12 @@ bot.on('callback_query', async (ctx) => {
 });
 
 async function handleGetFreeSignal(ctx) {
+  const membership = await isUserInChannel(ctx.telegram, ctx.from.id);
+  await tracking.safelyObserve(ctx.from.id, membership);
   const {
     isInChannel,
     text: checkText,
-  } = await isUserInChannel(ctx.telegram, ctx.from.id);
+  } = membership;
   if (!isInChannel) {
     await replyBold(
       ctx,
@@ -141,6 +165,7 @@ bot.on('message', async (ctx) => {
   const state = getState(ctx.chat.id);
 
   if (m.text) {
+    if (await handleMetaText(ctx, m.text)) return;
     const handled = await handleAdminText(ctx, m.text);
     if (handled) return;
   }

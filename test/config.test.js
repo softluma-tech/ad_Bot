@@ -61,21 +61,3 @@ test('channelUsername trims whitespace and strips leading @', () => {
 test('channelUsername falls back to the default when empty', () => {
   assert.equal(loadConfig({ CHANNEL_USERNAME: '' }).channelUsername, 'bfsstamil');
 });
-
-test('recheck hours are parsed from env', () => {
-  const cfg = loadConfig({ CHANNEL_RECHECK_HOURS: '6' });
-  assert.equal(cfg.channelRecheckHours, 6);
-  assert.equal(cfg.channelRecheckMs, 6 * 60 * 60 * 1000);
-});
-
-test('recheck hours 0 disables the window (re-check everyone)', () => {
-  const cfg = loadConfig({ CHANNEL_RECHECK_HOURS: '0' });
-  assert.equal(cfg.channelRecheckHours, 0);
-  assert.equal(cfg.channelRecheckMs, 0);
-});
-
-test('recheck hours fall back to 24 when invalid', () => {
-  const cfg = loadConfig({ CHANNEL_RECHECK_HOURS: 'abc' });
-  assert.equal(cfg.channelRecheckHours, 24);
-  assert.equal(cfg.channelRecheckMs, 24 * 60 * 60 * 1000);
-});

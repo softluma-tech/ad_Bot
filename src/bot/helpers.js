@@ -117,8 +117,8 @@ const channelUnavailableText = () =>
 
 async function isUserInChannel(telegram, userId, options = {}) {
   const quiet = options.quiet === true;
-  const channelRef = `@${config.channelUsername}`;
-  if (!config.channelUsername) {
+  const channelRef = config.channelId || `@${config.channelUsername}`;
+  if (!config.channelId && !config.channelUsername) {
     return {
       isInChannel: false,
       ok: false,
@@ -133,7 +133,7 @@ async function isUserInChannel(telegram, userId, options = {}) {
   try {
     const member = await telegram.getChatMember(channelRef, userId);
     const status = member && member.status;
-    const isInChannel = MEMBER_STATUSES.includes(status);
+    const isInChannel = MEMBER_STATUSES.includes(status) || (status === 'restricted' && member.is_member === true);
     return {
       isInChannel,
       ok: true,

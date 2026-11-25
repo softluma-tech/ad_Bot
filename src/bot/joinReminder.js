@@ -42,9 +42,10 @@ async function logChannelJoin(telegram, from) {
   }
 }
 
-async function sendJoinReminder(telegram, from) {
+async function sendJoinReminder(telegram, from, onMembership = async () => {}) {
   const userId = typeof from === 'number' ? from : from.id;
   const res = await isUserInChannel(telegram, userId, { quiet: true });
+  await onMembership(userId, res);
   // unverifiable (rate limit, 403, channel not found…) — stay silent
   if (!res.ok) return false;
 
@@ -55,7 +56,7 @@ async function sendJoinReminder(telegram, from) {
   return true;
 }
 
-function scheduleJoinReminder(telegram, from, delayMs = JOIN_REMINDER_MS) {
+function scheduleJoinReminder(telegram, from, delayMs = JOIN_REMINDER_MS, onMembership) {
   const id = Number(typeof from === 'number' ? from : from.id);
   // never nudge admins
   if (config.adminIds.includes(id)) return null;
@@ -65,7 +66,7 @@ function scheduleJoinReminder(telegram, from, delayMs = JOIN_REMINDER_MS) {
 
   const timer = setTimeout(() => {
     timers.delete(id);
-    sendJoinReminder(telegram, from).catch((err) =>
+    sendJoinReminder(telegram, from, onMembership).catch((err) =>
       console.error('[join reminder]', err),
     );
   }, delayMs);

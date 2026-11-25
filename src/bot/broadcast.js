@@ -98,7 +98,7 @@ async function handleBroadcastMessage(ctx, m, target = 'all') {
       ctx,
       `<tg-emoji emoji-id="${EMOJIS.warn}">⚠️</tg-emoji> <b>No users match this target.</b>\n\n` +
         (target === 'nonChannel'
-          ? `No verified non-members found. Use 👥 Channel Members first and wait for the check to finish, then try again.`
+          ? `No verified non-members found. Run Broadcast (Not in Channel) again to perform a fresh check.`
           : `No recipients available.`) +
         `\n\nUse /cancel to abort.`,
       panelKeyboard(),

@@ -16,6 +16,10 @@ with a full admin panel: stats, content management and broadcasting.
 - **Emoji**: premium emoji IDs are hardcoded inline in every message text via Telegram HTML (`<tg-emoji emoji-id="…">` + `<b>`, sent with `parse_mode: HTML`). Falls back to standard emojis without Premium (`src/bot/emoji.js`)
 - **Reliability**: broadcast state is persisted in MongoDB (survives restarts), a DB-backed lock prevents double broadcasts across instances, and sends are globally paced with retry/backoff on Telegram 429 rate limits
 - **Quality**: unit tests (`node --test`) and ESLint (`npm run lint`)
+- **Meta tracking**: landing attribution stored in MongoDB, confirmed new channel
+  join `Subscribe` conversions with durable retries/deduplication, and Pixel ID /
+  CAPI token configuration in `/admin` → **📈 Meta Tracking**.
+  See [Meta tracking setup and eligibility rules](docs/meta-tracking.md).
 
 ## Project structure
 
@@ -130,8 +134,9 @@ Admin panel:
 [📊 Stats] [📊 Report]
 [📅 Day Report]
 [🖇 Change Image] [🎙 Change Voice]
-[🔗 VIP Link] [👥 Channel Members]
+[🔗 VIP Link]
 [🗣 Broadcast] [⛔ Broadcast (Not in Channel)]
+[📈 Meta Tracking]
 [👁 Preview Ad] [❌ Close]
 ```
 
